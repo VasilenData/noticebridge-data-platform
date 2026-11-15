@@ -3,6 +3,7 @@
 import io
 import json
 from datetime import datetime, timezone
+from http.client import IncompleteRead
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request
@@ -133,6 +134,11 @@ def test_only_well_formed_source_pointers_can_become_queries():
 
 class FakeReply(io.BytesIO):
     status = 200
+
+    def __init__(self, body, *, headers=None, status=200):
+        super().__init__(body)
+        self.headers = headers or {}
+        self.status = status
 
 
 def test_transient_http_wait_is_honored_before_retry(monkeypatch):
@@ -302,3 +308,161 @@ def test_context_budget_is_validated_before_any_request(monkeypatch, depth):
     monkeypatch.setattr(c, "search", lambda *a, **kw: pytest.fail("must not fetch"))
     with pytest.raises(ValueError, match="Context depth"):
         c.collect("selected query", context_depth=depth)
+
+
+XML_RECORD = {
+    "publication-number": "1-2026",
+    "notice-identifier": "synthetic-notice",
+    "notice-version": 1,
+    "notice-type": "cn-standard",
+    "publication-date": "2026-11-13Z",
+    "change-notice-version-identifier": "0-2026",
+    "deadline-receipt-tender-date-lot": ["2026-12-01Z"],
+}
+VALID_XML = b"""<ContractNotice><ID>synthetic-notice</ID><VersionID>1</VersionID>
+<NoticeTypeCode>cn-standard</NoticeTypeCode><PublicationDate>2026-11-13Z</PublicationDate>
+<ChangedNoticeIdentifier>0-2026</ChangedNoticeIdentifier><TenderSubmissionDeadlinePeriod>
+<EndDate>2026-12-01Z</EndDate></TenderSubmissionDeadlinePeriod></ContractNotice>"""
+
+
+@pytest.mark.parametrize("bad_body", [b"", b"<ContractNotice><ID>unfinished"])
+def test_empty_or_truncated_xml_retries_then_still_passes_all_semantic_checks(
+    monkeypatch, bad_body
+):
+    replies = iter(
+        [
+            FakeReply(bad_body, headers={"Content-Type": "application/xml"}),
+            FakeReply(VALID_XML, headers={"Content-Type": "application/xml; charset=UTF-8"}),
+        ]
+    )
+    waits = []
+    monkeypatch.setattr(c, "urlopen", lambda *a, **kw: next(replies))
+    monkeypatch.setattr(c.time, "sleep", waits.append)
+    result = c.verify_xml(XML_RECORD)
+    assert all(result["checks"].values()) and len(result["checks"]) == 6
+    assert waits == [1]
+    assert len(result["attempts"]) == 2
+    first = result["attempts"][0]
+    assert first["status"] == 200
+    assert first["content_type"] == "application/xml"
+    assert first["bytes"] == len(bad_body)
+    assert first["sha256"] == c.sha(bad_body)
+    assert "response_problem" in first
+
+
+def test_xml_http_and_content_failures_share_three_attempts_and_preserve_old_capture(
+    monkeypatch, tmp_path
+):
+    replies = iter(
+        [
+            HTTPError("https://ted.europa.eu/en/notice/1-2026/xml", 503, "temporary", {}, None),
+            FakeReply(b"", status=202, headers={"Content-Type": "application/xml"}),
+            FakeReply(b"", status=202, headers={"Content-Type": "application/xml"}),
+        ]
+    )
+    calls, waits = [], []
+
+    def opened(*args, **kwargs):
+        calls.append(1)
+        reply = next(replies)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(c, "urlopen", opened)
+    monkeypatch.setattr(c.time, "sleep", waits.append)
+    monkeypatch.setattr(
+        c, "search", lambda query, *a, **kw: [XML_RECORD] if "classification-cpv" in query else []
+    )
+    target = tmp_path / "source.json"
+    target.write_bytes(b"previous valid capture")
+    monkeypatch.setattr("sys.argv", ["collect", "--output", str(target)])
+    with pytest.raises(c.SourceResponseError, match="attempt_count=3") as caught:
+        c.main()
+    assert len(calls) == 3 and waits == [1, 2]
+    assert [a["status"] for a in caught.value.attempts] == [503, 202, 202]
+    assert all(a["bytes"] == 0 and a["sha256"] == c.sha(b"") for a in caught.value.attempts)
+    assert '"content_type": "application/xml"' in str(caught.value)
+    assert "https://ted.europa.eu/en/notice/1-2026/xml" in str(caught.value)
+    assert target.read_bytes() == b"previous valid capture"
+
+
+@pytest.mark.parametrize(
+    "body,headers,status",
+    [
+        (b"", {"X-Amzn-Waf-Action": "challenge", "Content-Type": "text/html"}, 202),
+        (b"<html>Access challenge</html>", {"Content-Type": "text/html"}, 200),
+        (b"", {"CF-Mitigated": "challenge"}, 200),
+    ],
+)
+def test_access_challenges_or_html_fail_without_retry_or_alternate_requests(
+    monkeypatch, body, headers, status
+):
+    calls = []
+
+    def opened(*args, **kwargs):
+        calls.append(1)
+        return FakeReply(body, headers=headers, status=status)
+
+    monkeypatch.setattr(c, "urlopen", opened)
+    monkeypatch.setattr(c.time, "sleep", lambda _: pytest.fail("access refusal must not retry"))
+    with pytest.raises(c.SourceResponseError, match="no_bypass") as caught:
+        c.verify_xml(XML_RECORD)
+    assert len(calls) == 1
+    assert caught.value.attempts[0]["status"] == status
+    assert caught.value.attempts[0]["sha256"] == c.sha(body)
+
+
+def test_valid_xml_with_wrong_source_values_never_passes_reconciliation(monkeypatch):
+    wrong_xml = VALID_XML.replace(b"2026-12-01Z", b"2026-12-02Z")
+    monkeypatch.setattr(c, "urlopen", lambda *a, **kw: FakeReply(wrong_xml))
+    monkeypatch.setattr(
+        c.time, "sleep", lambda _: pytest.fail("semantic disagreement must not retry")
+    )
+    with pytest.raises(ValueError, match="API/XML reconciliation failed"):
+        c.verify_xml(XML_RECORD)
+
+
+def test_utf16_doctype_is_refused_before_entity_expansion(monkeypatch):
+    declaration = (
+        '<?xml version="1.0" encoding="utf-16"?>'
+        '<!DOCTYPE root [<!ENTITY demo "synthetic">]><root>&demo;</root>'
+    ).encode("utf-16")
+    monkeypatch.setattr(c, "urlopen", lambda *a, **kw: FakeReply(declaration))
+    monkeypatch.setattr(c.time, "sleep", lambda _: pytest.fail("unsafe XML must not retry"))
+    with pytest.raises(c.SourceResponseError, match="xml_external_entities_prohibited"):
+        c.verify_xml(XML_RECORD)
+    with pytest.raises(c.UnsafeXML, match="prohibited"):
+        c.parse_xml(declaration)
+
+
+def test_error_body_read_failure_preserves_status_and_partial_hash_then_retries(monkeypatch):
+    class BrokenErrorBody(io.BytesIO):
+        def read(self, *args):
+            raise IncompleteRead(b"partial", 100)
+
+    replies = iter(
+        [
+            HTTPError(
+                c.ENDPOINT, 503, "temporary", {"Content-Type": "text/plain"}, BrokenErrorBody()
+            ),
+            FakeReply(VALID_XML, headers={"Content-Type": "application/xml"}),
+        ]
+    )
+
+    def opened(*args, **kwargs):
+        value = next(replies)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(c, "urlopen", opened)
+    monkeypatch.setattr(c.time, "sleep", lambda _: None)
+    result = c.verify_xml(XML_RECORD)
+    assert all(result["checks"].values())
+    failed = result["attempts"][0]
+    assert failed["status"] == 503
+    assert failed["content_type"] == "text/plain"
+    assert failed["bytes"] == 7 and failed["sha256"] == c.sha(b"partial")
+    assert failed["body_read_error"] == "IncompleteRead"
+    assert failed["body_hash_scope"] == "bytes_available_to_client"
