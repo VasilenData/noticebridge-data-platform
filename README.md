@@ -36,7 +36,7 @@ the original snapshot plus a five-publication-day backfill for November 9–13.
 | **Full replay equals the incremental result** | Every generated historical edition verifies against the archived source sequence |
 
 Counts describe the initial expanded edition, not a perpetual promise about the
-latest scheduled run. The [public capture and replay ledger](https://vasilendata.github.io/noticebridge-data-platform/#operations)
+latest capture. The [public capture and replay ledger](https://vasilendata.github.io/noticebridge-data-platform/#operations)
 shows the current evidence, acquisition attempts, clocks and archive capacity.
 
 ### A concrete change
@@ -90,11 +90,17 @@ loads `current.json` and the verified versioned editions.
 
 ## Refresh and honest boundaries
 
-A bounded daily GitHub workflow collects a three-calendar-day lookback, accepts
-only a fully replayable batch, and explicitly starts verification on the new
-commit. Tests, recovery exercises, independent replay and package checks precede
-Pages deployment. GitHub scheduling can be delayed; browser freshness is visible,
-and no independent notification service or uptime SLA is claimed.
+The bounded refresh command collects a three-calendar-day lookback and accepts
+only a fully replayable batch. A manual GitHub workflow also prepares the commit
+and verification dispatch. **Hosted collection is currently blocked:** on November
+15 TED returned an explicit XML access challenge to GitHub's runner. The collector
+refused it, the prior published edition stayed available, and the schedule was
+disabled rather than repeatedly requesting challenged access. Local real-source
+collection succeeded; no successful hosted refresh is claimed. See the
+[dated incident and recovery boundary](docs/OPERATIONS.md#observed-hosted-incident-15-november-2026).
+
+Tests, recovery exercises, independent replay and package checks precede Pages
+deployment. Browser freshness is visible; no notification delivery or SLA is claimed.
 
 The archive stops at **100 captures or 50,000 retained notices** instead of silently
 throwing away historical evidence. Capacity, failure response and the migration
