@@ -318,6 +318,16 @@ def validate_release(release: object) -> dict:
     meta = release.get("release")
     if not isinstance(meta, dict) or not isinstance(release.get("notices"), list):
         raise ContractError("Release metadata or notices are missing")
+    source = release.get("source")
+    if not isinstance(source, dict) or source.get("name") != "TED":
+        raise ContractError("Release source must be TED")
+    captured_at = _capture_time(source.get("captured_at"))
+    capture_instant = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+    generated_at = _capture_time(meta.get("generated_from_capture_at"))
+    if datetime.fromisoformat(generated_at.replace("Z", "+00:00")) != capture_instant:
+        raise ContractError("Release capture time does not reconcile to source metadata")
+    if len(release["notices"]) > MAX_RECORDS:
+        raise ContractError("Retained history exceeds the configured demonstration bound")
     candidate = {k: v for k, v in release.items() if k != "release"}
     expected = digest(
         {
@@ -341,6 +351,18 @@ def validate_release(release: object) -> dict:
         normalized = normalize_record(raw)
         if normalized["content_sha256"] != item.get("content_sha256"):
             raise ContractError("Notice content fingerprint does not match")
+        if item.get("scope") not in {"primary", "context", "retained"}:
+            raise ContractError("Release notice scope must be primary, context or retained")
+        first_seen = datetime.fromisoformat(
+            _capture_time(item.get("first_seen_at")).replace("Z", "+00:00")
+        )
+        last_seen = datetime.fromisoformat(
+            _capture_time(item.get("last_seen_at")).replace("Z", "+00:00")
+        )
+        if not first_seen <= last_seen <= capture_instant:
+            raise ContractError("Notice observation times must satisfy first <= last <= capture")
+        if item["scope"] in {"primary", "context"} and last_seen != capture_instant:
+            raise ContractError("Current-capture notices must be last seen at the capture time")
     if release.get("summary", {}).get("notice_count") != len(seen):
         raise ContractError("Release count does not reconcile")
     return release

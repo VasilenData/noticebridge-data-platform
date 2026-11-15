@@ -18,7 +18,8 @@ costs; it is outside this first release.
 ## A small reproducible compiler
 
 The source collector, validation/compiler and browser are separate. The public
-consumer reads one complete JSON release, including its manifest and provenance.
+consumer reads one atomic pointer to hashed data and operations assets, including
+their manifest and provenance. Immutable original captures support replay from empty state.
 No hosted database, cloud account, authentication or paid LLM is necessary for this
 bounded workload. A new warehouse would add operational work without improving the
 demonstrated question at this scale.
@@ -32,7 +33,7 @@ inspect the source notice and its current official status before acting.
 
 ## Publication boundary
 
-Validate the complete candidate before replacing the consumer JSON. Keep source
+Validate the complete candidate before replacing the consumer pointer. Keep source
 identity and stable release content reproducible. Process-interruption tests establish
 the local file visibility boundary they actually exercise, not a distributed service
 SLA or resilience to every hardware failure.
@@ -43,6 +44,19 @@ One source capture establishes a working integration and a dated observation. It
 does not establish sustained operation. Synthetic adversarial tests remain labelled.
 The portfolio keeps Meterwork, NYC Taxi and Finance Mart as its three featured CV
 projects until a replacement has stronger observed evidence for the target role.
+
+## Flagship extension
+
+The initial verifier could not independently reconstruct retained historical rows.
+The new archive and ordered replay fix that evidence gap without adding a database
+or a broker. Complete input batches are checked against the full history before
+acceptance. A single pointer selects hashed data and operating evidence together.
+
+The explorer now supports historical editions, source-linked deadline review and a
+capture/replay ledger. A daily bounded refresh begins accumulating actual operating
+evidence. The five-publication-day backfill remains labelled as collected in one
+session. This is a flagship walkthrough for external-data correctness and recovery;
+long-term operation, users and the owner's independent command remain separate proof.
 
 ## Data attribution
 

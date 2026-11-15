@@ -46,6 +46,29 @@ commands. Keep the existing three CV flagships until this project earns replacem
 through measured functionality and operating history. Never fabricate customers,
 business savings, a human review, continuous uptime or the owner's unaided work.
 
+## Flagship extension: capture, replay, recover
+
+Audit the initial product for evidence gaps before adding technologies. Prioritize
+independently reconstructible history over a larger row count. Archive actual raw
+captures byte-for-byte; order them by actual observation time and retain publication
+dates separately. Collect a bounded real historical backfill without calling it
+historical operation. Reconstruct every intermediate consumer edition from empty
+state and prove equivalence to incremental processing.
+
+Accept a capture batch only after replay against existing history. Test conflicting
+immutable IDs, cross-capture cycles, missing/mutated archived inputs and competing
+writers. Publish immutable assets first, verify them, then atomically select data
+and run metadata together. Observe an actual process boundary before killing the
+publisher; prove the previous complete edition survives and a retry recovers.
+
+Expose a useful decision workflow: source-linked changes, historical editions,
+bounded rendering and exact-view export. Separate publication, observation and
+build clocks. Report actual retry evidence and synthetic incidents separately.
+Configure a bounded free scheduled refresh, show freshness and archive capacity,
+and gate publication on the exact current commit. Preserve old asset addresses.
+Verify public bytes and terminal CI/deployment results. Do not fabricate weeks of
+uptime, users, savings, reviewer endorsement or unaided technical performance.
+
 ## Primary source references
 
 - [TED Search API](https://docs.ted.europa.eu/api/latest/search.html)

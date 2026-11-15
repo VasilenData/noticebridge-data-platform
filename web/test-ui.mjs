@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {csvCell,filterNotices,noticesCsv,readState,safeTedUrl,stateQuery,validateBundle,valueText} from './ui-utils.mjs';
+import {createHash} from 'node:crypto';
+import {csvCell,deadlineBrief,filterNotices,noticesCsv,pageWindow,readState,safeReleaseAsset,safeTedUrl,stateQuery,validateBundle,validateOperations,validatePointer,valueText,verifiedJson} from './ui-utils.mjs';
 
 const rows=[
   {id:'10-2026',title:'Sécurité du réseau',buyer:'Ville de Liège',countries:['BEL'],cpv_codes:['72000000'],publication_date:'2026-11-01',comparison:{status:'compared',parent_id:'9-2026',changes:[{field:'deadline',label:'Deadline',before:'2026-10-01',after:'2026-11-01'}]},source_url:'https://ted.europa.eu/en/notice/-/detail/10-2026'},
@@ -17,7 +18,7 @@ test('combined filters preserve accent-insensitive word matching and actual revi
 
 test('source links require an exact TED host, HTTPS, no credentials and a notice path',()=>{
   assert.equal(safeTedUrl(rows[0].source_url),rows[0].source_url);
-  for(const url of ['javascript:alert(1)','https://ted.europa.eu.evil.test/en/notice/-/detail/1','http://ted.europa.eu/en/notice/-/detail/1','https://user@ted.europa.eu/en/notice/-/detail/1','https://ted.europa.eu/redirect?to=evil.test','https://ted.europa.eu:444/en/notice/-/detail/1'])assert.equal(safeTedUrl(url),null,url);
+  for(const url of ['javascript:alert(1)','https://ted.europa.eu.evil.test/en/notice/-/detail/1','http://ted.europa.eu/en/notice/-/detail/1','https://user@ted.europa.eu/en/notice/-/detail/1','https://ted.europa.eu/redirect?to=evil.test','https://ted.europa.eu:444/en/notice/-/detail/1','https://ted.europa.eu/en/notice/-/detail/10-2026?redirect=bad','https://ted.europa.eu/en/notice/-/detail/10-2026#untrusted'])assert.equal(safeTedUrl(url),null,url);
 });
 
 test('CSV treats formula prefixes as literal text, including whitespace and control prefixes',()=>{
@@ -31,9 +32,66 @@ test('CSV treats formula prefixes as literal text, including whitespace and cont
 });
 
 test('query state roundtrips punctuation, Unicode and selected notice without executable interpolation',()=>{
-  const state={q:'réseau & support <script>',country:'PRT',category:'72',comparison:'changed',notice:'10-2026'};
+  const state={q:'réseau & support <script>',country:'PRT',category:'72',comparison:'changed',notice:'10-2026',release:'a'.repeat(64)};
   assert.deepEqual(readState('?'+stateQuery(state)),state);
   assert.equal(stateQuery({q:'',country:'',category:'',comparison:'',notice:''}),'');
+});
+
+const hash='a'.repeat(64),otherHash='b'.repeat(64);
+const asset={path:`releases/${hash}.json`,sha256:hash};
+
+test('release pointers reject traversal, external assets and fingerprints without weakening to old data',()=>{
+  assert.equal(validatePointer({schema_version:1,release:asset,operations:asset}).release,asset);
+  for(const path of ['../data.json',`https://evil.example/releases/${hash}.json`,`releases/${hash}.json?other=1`,`releases/${hash}.json#x`,`releases/../${hash}.json`,`releases/${hash.toUpperCase()}.json`])assert.equal(safeReleaseAsset({...asset,path}),false,path);
+  assert.equal(safeReleaseAsset({...asset,sha256:'xyz'}),false);
+  assert.throws(()=>validatePointer({schema_version:1,release:asset}));
+});
+
+test('consumer refuses a single changed byte even when changed JSON remains valid',async()=>{
+  const data=new TextEncoder().encode('{"notice_count":2}\n');
+  const digest=createHash('sha256').update(data).digest('hex');
+  assert.deepEqual(await verifiedJson(data.buffer,digest),{notice_count:2});
+  const changed=new TextEncoder().encode('{"notice_count":3}\n');
+  await assert.rejects(()=>verifiedJson(changed.buffer,digest),/fingerprint/);
+  await assert.rejects(()=>verifiedJson(data.buffer,'not-a-hash'));
+});
+
+test('pagination covers a filtered population exactly once and bounds rendered rows',()=>{
+  const input=Array.from({length:123},(_,i)=>i);
+  const windows=[0,1,2].map(page=>pageWindow(input,page));
+  assert.deepEqual(windows.flatMap(w=>w.items),input);
+  assert.deepEqual(windows.map(w=>w.items.length),[50,50,23]);
+  assert.equal(pageWindow(input,99).page,2);
+  assert.equal(pageWindow([],7).page,0);
+  assert.deepEqual(pageWindow([],7).items,[]);
+  assert.throws(()=>pageWindow(input,0,1000));
+});
+
+test('deadline brief excludes superseded, missing and unsafe evidence instead of implying an open tender',()=>{
+  const current={...rows[0],has_known_successor:false};
+  const old={...rows[0],id:'9-2026',has_known_successor:true};
+  const missing={...rows[0],id:'8-2026',comparison:{status:'compared',changes:[{field:'deadline',before:null,after:'2026-12-01'}]}};
+  const unsafe={...rows[0],id:'7-2026',source_url:'javascript:alert(1)'};
+  assert.deepEqual(deadlineBrief([old,missing,unsafe,current]).map(x=>x.notice.id),['10-2026']);
+  assert.equal(deadlineBrief([current],0).length,0);
+});
+
+function validOperations() {
+  const captured='2026-11-15T16:00:00Z';
+  return {schema_version:1,capture_count:1,replay_verified:true,current_release_id:hash,code_sha256:otherHash,publication_days:['2026-11-09'],first_capture_at:captured,last_capture_at:captured,runs:[{sequence:1,mode:'backfill',publication_day:'2026-11-09',captured_at:captured,source_sha256:otherHash,release_id:hash,release_path:asset.path,release_sha256:hash,counts:{incoming:3,new:3,already_seen:0,retained:0,resolved_parents:0,total:3},duration_ms:2}]};
+}
+
+test('operating ledger preserves historical publication time separate from actual collection',()=>{
+  const ops=validOperations();
+  assert.equal(validateOperations(ops),ops);
+  assert.equal(ops.runs[0].publication_day,'2026-11-09');
+  assert.equal(ops.runs[0].captured_at,'2026-11-15T16:00:00Z');
+});
+
+test('operating ledger refuses reconciliation, ordering and release identity inconsistencies',()=>{
+  for(const mutate of [o=>o.capture_count=2,o=>o.current_release_id=otherHash,o=>o.runs[0].counts.already_seen=1,o=>o.runs[0].sequence=2,o=>o.runs[0].mode='production',o=>o.last_capture_at='2026-11-14T00:00:00Z',o=>o.runs[0].duration_ms=-1,o=>o.replay_verified=false]){
+    const ops=validOperations();mutate(ops);assert.throws(()=>validateOperations(ops));
+  }
 });
 
 test('bundle validation rejects duplicate identities and unsupported comparison states',()=>{

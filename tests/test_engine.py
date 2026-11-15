@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from noticebridge.engine import ContractError, canonical, compile_release, validate_release
+from noticebridge.engine import ContractError, canonical, compile_release, digest, validate_release
 
 
 def notice(number="100-2026", **changes):
@@ -374,3 +374,57 @@ def test_corrupted_release_cannot_be_used_as_history():
     changed["notices"][0]["title"] = "Undetected corruption would be bad"
     with pytest.raises(ContractError, match="fingerprint"):
         validate_release(changed)
+
+
+def rehash_release(release):
+    """A checksum is not a substitute for semantic validation of retained history."""
+    payload = {key: value for key, value in release.items() if key != "release"}
+    release["release"]["payload_sha256"] = digest(payload)
+    release["release"]["id"] = digest(
+        {
+            "payload": payload,
+            "source_sha256": release["release"]["source_sha256"],
+            "code_sha256": release["release"]["code_sha256"],
+        }
+    )
+    return release
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("first_seen_at", "not-a-timestamp"),
+        ("first_seen_at", "2026-11-15T12:00:00"),
+        ("first_seen_at", "2026-11-16T12:00:00Z"),
+        ("last_seen_at", "2026-11-14T12:00:00Z"),
+        ("last_seen_at", "2026-11-16T12:00:00Z"),
+        ("scope", "withdrawn"),
+    ],
+)
+def test_self_consistent_hashes_do_not_validate_impossible_observation_history(field, value):
+    release = compile_release(snapshot(notice()))
+    release["notices"][0][field] = value
+    with pytest.raises(ContractError):
+        validate_release(rehash_release(release))
+
+
+def test_a_current_capture_notice_cannot_claim_an_earlier_last_observation():
+    release = compile_release(snapshot(notice()))
+    release["notices"][0]["first_seen_at"] = "2026-11-13T12:00:00Z"
+    release["notices"][0]["last_seen_at"] = "2026-11-14T12:00:00Z"
+    with pytest.raises(ContractError, match="Current-capture"):
+        validate_release(rehash_release(release))
+
+
+def test_release_and_source_capture_clocks_must_agree():
+    release = compile_release(snapshot(notice()))
+    # Metadata outside the payload hash must still obey the release contract.
+    release["release"]["generated_from_capture_at"] = "2026-11-14T12:00:00Z"
+    with pytest.raises(ContractError, match="capture time"):
+        validate_release(release)
+
+
+def test_valid_retained_observations_survive_a_later_empty_selection():
+    initial = compile_release(snapshot(notice(), captured_at="2026-11-15T12:00:00Z"))
+    later = compile_release(snapshot(captured_at="2026-11-16T12:00:00Z"), initial)
+    assert validate_release(later)["notices"][0]["last_seen_at"] == "2026-11-15T12:00:00Z"
