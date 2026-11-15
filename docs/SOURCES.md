@@ -30,6 +30,36 @@ unresolved within that bound** and remain visible. Context rows are historical
 evidence, separate from the primary query population. This is one frozen capture,
 not a claim of daily operation or a complete history of every procedure.
 
+## Multi-partition backfill captured on 15 November
+
+The next collection run retrieved five distinct publication-day partitions, using
+the same IT-services query and the same two-hop context bound. The dates below
+are **publication dates**; every capture actually ran on **15 November 2026**.
+They do not represent five days of unattended operation.
+
+| Publication partition | Primary notices | Context notices | Unresolved references | Capture started (UTC, 15 Nov) |
+| --- | ---: | ---: | ---: | --- |
+| 2026-11-09 | 274 | 78 | 10 | 14:20:48 |
+| 2026-11-10 | 217 | 76 | 9 | 14:21:00 |
+| 2026-11-11 | 226 | 52 | 6 | 14:21:19 |
+| 2026-11-12 | 204 | 61 | 13 | 14:21:38 |
+| 2026-11-13 | 229 | 72 | 5 | 14:21:55 |
+
+The last collection completed at 14:22:11 UTC. Each primary population reconciled
+to the terminal empty page, and five correction notices per partition passed the
+six selected API/XML checks: **150 comparisons across the new captures**.
+
+Together with the original frozen capture, these inputs contain **1,457 unique
+publication IDs**, including **1,150 unique primary IDs**. There are **322 IDs
+seen in more than one input**, and no conflicting selected-source-field hashes
+were observed for those repeated IDs. Summing all input rows would double-count
+both context and the repeated 13 November selection.
+
+The new capture requests encountered **15 real HTTP 429 responses**. Their
+recorded bounded waits and subsequent successful attempts are visible in each
+capture's request evidence. This is observed recovery from rate limiting during
+one backfill session, not a service availability metric.
+
 ## Meaning of each field
 
 | Output | TED source | Interpretation |
@@ -86,7 +116,9 @@ supplier received an extension, won work, or met procurement eligibility rules.
 - The request uses a fixed allowlist of organization, identifier, classification,
   title and date fields. It excludes email, phone, street and person/contact fields.
 - Every normalized row retains the selected source fields and their canonical
-  JSON SHA-256; the full API-response byte hashes are also recorded.
+  JSON SHA-256; the full API-response byte hashes are also recorded. New captures
+  also include canonical request-body hashes and each HTTP attempt's observation
+  time, duration, status and retry wait where relevant.
 - The final collector's LF-normalized source hash is stored in the evidence.
 - Raw XML is processed in memory, reduced to selected identifiers/dates, and
   discarded. Its hash supports comparison with the public original.
@@ -104,6 +136,22 @@ The collector limits primary queries to 1,000 notices and additional context to
 transient responses up to three attempts, with a 20-second socket timeout and
 bounded waits. Longer or unsupported `Retry-After` instructions fail closed.
 These socket timeouts are not an OS-level wall-clock termination guarantee.
+
+Both standard `Retry-After` forms are supported: integer seconds and an HTTP date.
+A wait above ten seconds or a malformed instruction aborts collection. Permanent
+HTTP errors are not retried. Retries do not increase the three-attempt ceiling.
+The recorded attempt duration excludes the separately reported retry wait.
+
+For a controller that collects several partitions, use
+`sources.collect.collect_day("YYYY-MM-DD")`. It adds the requested publication
+date to source metadata and verifies that every primary row belongs to that day;
+historical context is explicitly exempt. Invalid page totals, malformed publication
+identifiers, repeated/missing iteration tokens, and rows exceeding the reported
+population fail closed. Context depth is limited to an integer from zero to four.
+
+A verified zero-row query is a successful observation of an empty partition,
+which can occur on weekends or holidays. Its check time must not be confused with
+the date of the newest published notice. Retain both values in operating reports.
 
 Use a new output path to retain the published capture. Future API results may
 differ; a successful new collection does not retroactively change the old record.
