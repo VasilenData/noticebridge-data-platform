@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
 from .engine import ContractError, canonical, compile_release, validate_release
+
+MAX_JSON_BYTES = 64 * 1024 * 1024
 
 
 @contextmanager
@@ -51,8 +54,17 @@ def writer_lock(output: Path):
         handle.close()
 
 
-def read_json(path: Path) -> dict:
-    if path.stat().st_size > 64 * 1024 * 1024:
+def read_bytes_bounded(path: Path) -> bytes:
+    """Read one observed payload; an earlier stat is not a read-time size bound."""
+    with path.open("rb") as handle:
+        raw = handle.read(MAX_JSON_BYTES + 1)
+    if len(raw) > MAX_JSON_BYTES:
+        raise ContractError("Input exceeds the 64 MiB demonstration bound")
+    return raw
+
+
+def parse_json(raw: bytes, name: str = "input") -> dict:
+    if len(raw) > MAX_JSON_BYTES:
         raise ContractError("Input exceeds the 64 MiB demonstration bound")
 
     def unique_keys(pairs):
@@ -66,14 +78,28 @@ def read_json(path: Path) -> dict:
     def no_constant(value):
         raise ContractError(f"Non-finite JSON number: {value}")
 
+    def finite_float(value):
+        number = float(value)
+        if not math.isfinite(number):
+            no_constant(value)
+        return number
+
     try:
-        return json.loads(
-            path.read_text(encoding="utf-8"),
+        value = json.loads(
+            raw.decode("utf-8"),
             object_pairs_hook=unique_keys,
             parse_constant=no_constant,
+            parse_float=finite_float,
         )
-    except (UnicodeError, json.JSONDecodeError) as exc:
-        raise ContractError(f"Invalid UTF-8 JSON: {path.name}") from exc
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ContractError(f"Invalid UTF-8 JSON: {name}") from exc
+    if not isinstance(value, dict):
+        raise ContractError(f"JSON root must be an object: {name}")
+    return value
+
+
+def read_json(path: Path) -> dict:
+    return parse_json(read_bytes_bounded(path), path.name)
 
 
 def build_to_path(source: Path, output: Path, *, before_replace=None) -> dict:
