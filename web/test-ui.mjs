@@ -78,7 +78,7 @@ test('deadline brief excludes superseded, missing and unsafe evidence instead of
 
 function validOperations() {
   const captured='2026-11-15T16:00:00Z';
-  return {schema_version:1,capture_count:1,replay_verified:true,current_release_id:hash,code_sha256:otherHash,publication_days:['2026-11-09'],first_capture_at:captured,last_capture_at:captured,runs:[{sequence:1,mode:'backfill',publication_day:'2026-11-09',captured_at:captured,source_sha256:otherHash,release_id:hash,release_path:asset.path,release_sha256:hash,counts:{incoming:3,new:3,already_seen:0,retained:0,resolved_parents:0,total:3},duration_ms:2}]};
+  return {schema_version:1,capture_count:1,archive_capacity:{maximum:100,remaining:99},replay_verified:true,current_release_id:hash,code_sha256:otherHash,publication_days:['2026-11-09'],first_capture_at:captured,last_capture_at:captured,runs:[{sequence:1,mode:'backfill',publication_day:'2026-11-09',captured_at:captured,source_sha256:otherHash,release_id:hash,release_path:asset.path,release_sha256:hash,counts:{incoming:3,new:3,already_seen:0,retained:0,resolved_parents:0,total:3},duration_ms:2}]};
 }
 
 test('operating ledger preserves historical publication time separate from actual collection',()=>{
@@ -106,4 +106,21 @@ test('missing information stays explicit in comparisons',()=>{
   assert.equal(valueText(null),'Not stated in captured fields');
   assert.equal(valueText([]),'Not stated in captured fields');
   assert.equal(valueText(['A','B']),'A · B');
+});
+
+test('capacity and history conservation remain checked even for validly hashed JSON',()=>{
+  for(const mutate of [o=>o.archive_capacity.remaining=100,o=>o.archive_capacity.maximum=true,o=>delete o.archive_capacity,o=>o.runs[0].counts.total=99,o=>o.runs[0].counts.retained=2,o=>o.runs[0].counts.resolved_parents=1,o=>o.publication_days=['2026-11-08']]) {
+    const ops=validOperations();mutate(ops);assert.throws(()=>validateOperations(ops));
+  }
+});
+
+test('a recapture reconciles new, seen-again and retained identities across editions',()=>{
+  const ops=validOperations(),second=structuredClone(ops.runs[0]);
+  second.sequence=2;second.mode='refresh';second.captured_at='2026-11-15T17:00:00Z';
+  second.release_id=otherHash;second.release_path=`releases/${otherHash}.json`;second.release_sha256=otherHash;
+  second.counts={incoming:2,new:1,already_seen:1,retained:2,resolved_parents:1,total:4};
+  ops.runs.push(second);ops.capture_count=2;ops.archive_capacity.remaining=98;ops.last_capture_at=second.captured_at;ops.current_release_id=otherHash;
+  assert.equal(validateOperations(ops),ops);
+  second.counts.retained=1;second.counts.total=3;
+  assert.throws(()=>validateOperations(ops));
 });

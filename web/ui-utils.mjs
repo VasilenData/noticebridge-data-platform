@@ -107,8 +107,11 @@ export function validateOperations(ops) {
     || ops.capture_count !== ops.runs.length || ops.replay_verified !== true || !HASH.test(ops.current_release_id)
     || !Array.isArray(ops.publication_days) || !ops.publication_days.every(d=>/^\d{4}-\d{2}-\d{2}$/.test(d))
     || !iso(ops.first_capture_at) || !iso(ops.last_capture_at) || !HASH.test(ops.code_sha256)) throw new Error('Invalid operating evidence.');
+  const capacity = ops.archive_capacity;
+  if (!Number.isInteger(capacity?.maximum) || !Number.isInteger(capacity?.remaining)
+    || capacity.maximum < ops.capture_count || capacity.remaining !== capacity.maximum - ops.capture_count) throw new Error('Archive capacity does not reconcile.');
   const seen = new Set();
-  let previous = -Infinity;
+  let previous = -Infinity, priorTotal = 0;
   for (const [index,run] of ops.runs.entries()) {
     const time = Date.parse(run.captured_at);
     if (run.sequence !== index + 1 || !['bootstrap','backfill','refresh'].includes(run.mode)
@@ -117,10 +120,15 @@ export function validateOperations(ops) {
       || !safeReleaseAsset({path:run.release_path,sha256:run.release_sha256})
       || !['incoming','new','already_seen','retained','resolved_parents','total'].every(k=>Number.isInteger(run.counts?.[k]) && run.counts[k]>=0)
       || run.counts.incoming !== run.counts.new + run.counts.already_seen
+      || run.counts.total !== run.counts.incoming + run.counts.retained
+      || run.counts.total !== priorTotal + run.counts.new
+      || run.counts.retained !== priorTotal - run.counts.already_seen
+      || run.counts.resolved_parents > priorTotal
       || (run.duration_ms != null && (!Number.isFinite(run.duration_ms) || run.duration_ms<0))) throw new Error('Invalid capture ledger entry.');
-    previous = time; seen.add(run.release_id);
+    previous = time; priorTotal = run.counts.total; seen.add(run.release_id);
   }
-  if (ops.runs.at(-1).release_id !== ops.current_release_id || ops.runs[0].captured_at !== ops.first_capture_at || ops.runs.at(-1).captured_at !== ops.last_capture_at) throw new Error('Operating evidence does not reconcile.');
+  const days = [...new Set(ops.runs.map(run=>run.publication_day))].sort();
+  if (JSON.stringify(days) !== JSON.stringify(ops.publication_days) || ops.runs.at(-1).release_id !== ops.current_release_id || ops.runs[0].captured_at !== ops.first_capture_at || ops.runs.at(-1).captured_at !== ops.last_capture_at) throw new Error('Operating evidence does not reconcile.');
   return ops;
 }
 
