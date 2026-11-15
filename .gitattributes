@@ -1,0 +1,3 @@
+* text=auto eol=lf
+# Evidence fingerprints identify exact bytes, including their original line endings.
+*.json -text
