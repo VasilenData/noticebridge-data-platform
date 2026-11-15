@@ -97,6 +97,23 @@ query/context/request limits remain in the source contract.
 3. Run independent archive replay, tests and the recovery exercise. Publish only
    after verification. Inspect the deployed hashes and source freshness.
 
+## Observed hosted incident: 15 November 2026
+
+The first manually dispatched three-day refresh,
+[run 43726716227](https://github.com/VasilenData/noticebridge-data-platform/actions/runs/43726716227),
+stopped at 14:52:59 UTC while parsing an empty XML response. The original logs did
+not retain the response status/content type, so they do not establish why the
+publisher returned no XML. This was a real upstream interaction, not a fault
+injected exercise.
+
+The batch had not been imported or committed. Main remained at
+`8ece2dfa36c6b563fc946b7f40de62ea052fd630`; the publicly downloaded `current.json`
+still matched the verified six-capture edition byte-for-byte. Its data asset was
+`1a6e59d3b4307c748bc6c82ab83ae1dfc709bc8739a8a2c7d6a55e28c1ebd457`.
+This establishes containment for this incident, not a successful hosted refresh
+or a long-term availability record. The follow-up adds bounded response retries
+and explicit diagnostics while keeping API/XML validation mandatory.
+
 ## References
 
 - [TED iteration and pagination](https://docs.ted.europa.eu/ODS/latest/reuse/search-api.html)
