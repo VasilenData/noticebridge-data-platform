@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+<title id="title">NoticeBridge — Public contracts. Changes made clear.</title><desc id="desc">A public procurement notice comparison shows the earliest reported lot deadline changing from 18 November to 25 November 2026. Real TED source notices 706866-2026 and 789562-2026, captured 15 November 2026.</desc>
+<rect width="1200" height="630" fill="#101715"/><rect width="1200" height="5" fill="#91dfbf"/>
+<g font-family="Arial,sans-serif"><rect x="65" y="59" width="39" height="39" rx="10" fill="#91dfbf"/><path d="M76 88V70h5l11 17V70h4v18h-5L80 72v16z" fill="#12231d"/><text x="119" y="87" fill="#edf4ee" font-size="27" font-weight="700">NoticeBridge</text>
+<text x="66" y="169" fill="#91dfbf" font-size="12" letter-spacing="2.5">PUBLIC PROCUREMENT / DATA ENGINEERING</text>
+<text x="62" y="250" fill="#f1f4ed" font-size="54" font-weight="700" letter-spacing="-2">Public contracts.</text><text x="62" y="315" fill="#91dfbf" font-size="54" font-weight="700" letter-spacing="-2">Changes made clear.</text>
+<text x="66" y="374" fill="#b7c8bd" font-size="20">Follow the source. Compare the revision.</text><text x="66" y="407" fill="#b7c8bd" font-size="20">Keep the uncertainty visible.</text>
+<rect x="690" y="145" width="445" height="328" rx="13" fill="#f4f5ef"/><text x="716" y="180" fill="#4e6d58" font-size="10" letter-spacing="1.8">A CAPTURED SOURCE-LINKED CHANGE</text><line x1="716" x2="1109" y1="200" y2="200" stroke="#d3dfce"/>
+<text x="716" y="234" fill="#263e2e" font-size="18" font-weight="700">IT services for Digital Health</text><text x="716" y="261" fill="#667c6c" font-size="12">Iceland · TED notice 789562-2026</text>
+<text x="716" y="305" fill="#34533e" font-size="12" font-weight="700">Earliest reported lot deadline</text>
+<rect x="716" y="325" width="174" height="79" rx="5" fill="#eae4d7"/><text x="730" y="348" fill="#7a6c52" font-size="9" letter-spacing="1">PREVIOUS NOTICE</text><text x="730" y="379" fill="#695c46" font-size="22" font-weight="700">18 Nov 2026</text>
+<text x="906" y="373" fill="#5b7860" font-size="24">→</text>
+<rect x="942" y="325" width="167" height="79" rx="5" fill="#d8eddd"/><text x="956" y="348" fill="#447451" font-size="9" letter-spacing="1">THIS NOTICE</text><text x="956" y="379" fill="#285b37" font-size="22" font-weight="700">25 Nov 2026</text>
+<text x="716" y="439" fill="#6a7e6d" font-size="10">706866-2026 → 789562-2026 · Selected fields only</text>
+<line x1="65" x2="1135" y1="525" y2="525" stroke="#314539"/><text x="66" y="564" fill="#91af9b" font-size="12">Real TED snapshot · Captured 15 November 2026 · Read-only public data project</text><text x="1134" y="565" text-anchor="end" fill="#d2e4d7" font-size="12">VASILEN KANCHEV</text>
+</g></svg>
