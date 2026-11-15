@@ -9,12 +9,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
 import time
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -42,6 +44,31 @@ MAX_RESPONSE_BYTES = 8_000_000
 MAX_PRIMARY = 1000
 MAX_CONTEXT = 160
 PAGE_SIZE = 100
+MAX_RETRY_WAIT = 10
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def retry_after_seconds(hint: str | None, fallback: int) -> int:
+    """Honor both HTTP Retry-After forms, without exceeding the wait budget."""
+    if not hint:
+        return fallback
+    hint = hint.strip()
+    if hint.isdigit():
+        wait = int(hint)
+    else:
+        try:
+            retry_at = parsedate_to_datetime(hint)
+            if retry_at.tzinfo is None:
+                raise ValueError("Retry-After date needs an explicit time zone")
+            wait = max(0, math.ceil((retry_at - datetime.now(timezone.utc)).total_seconds()))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError("Invalid server Retry-After instruction") from exc
+    if wait > MAX_RETRY_WAIT:
+        raise RuntimeError("Server retry instruction exceeds the collection budget")
+    return wait
 
 
 def canonical(value: Any) -> bytes:
@@ -57,6 +84,8 @@ def sha(data: bytes) -> str:
 def read_url(request: Request, attempts: list[dict]) -> bytes:
     """Bounded retries; a failed call never replaces the last source snapshot."""
     for attempt in range(3):
+        started = time.monotonic()
+        observed_at = utc_now()
         try:
             with urlopen(request, timeout=20) as response:
                 body = response.read(MAX_RESPONSE_BYTES + 1)
@@ -69,24 +98,36 @@ def read_url(request: Request, attempts: list[dict]) -> bytes:
                         "status": response.status,
                         "bytes": len(body),
                         "sha256": sha(body),
+                        "observed_at_utc": observed_at,
+                        "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
                     }
                 )
                 return body
         except HTTPError as exc:
-            attempts.append({"url": request.full_url, "attempt": attempt + 1, "status": exc.code})
+            entry = {
+                "url": request.full_url,
+                "attempt": attempt + 1,
+                "status": exc.code,
+                "observed_at_utc": observed_at,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            }
+            attempts.append(entry)
             retryable = exc.code in {408, 429, 500, 502, 503, 504}
-            hint = exc.headers.get("Retry-After")
-            if hint and (not hint.isdigit() or int(hint) > 10):
-                raise RuntimeError(
-                    "Server retry instruction exceeds the collection budget"
-                ) from exc
-            wait = int(hint) if hint else 2**attempt
             if not retryable or attempt == 2:
                 raise
+            wait = retry_after_seconds(exc.headers.get("Retry-After"), 2**attempt)
+            entry["retry_wait_seconds"] = wait
             time.sleep(wait)
         except (TimeoutError, ConnectionError, URLError) as exc:
             attempts.append(
-                {"url": request.full_url, "attempt": attempt + 1, "error": type(exc).__name__}
+                {
+                    "url": request.full_url,
+                    "attempt": attempt + 1,
+                    "error": type(exc).__name__,
+                    "observed_at_utc": observed_at,
+                    "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                    "retry_wait_seconds": 2**attempt if attempt < 2 else None,
+                }
             )
             if attempt == 2:
                 raise
@@ -129,7 +170,17 @@ def search(query: str, evidence: list[dict], *, limit: int = MAX_PRIMARY) -> lis
         if response.get("timedOut"):
             raise ValueError("TED reported a timed-out partial search")
         batch = response.get("notices")
-        if not isinstance(batch, list) or not isinstance(response.get("totalNoticeCount"), int):
+        if (
+            not isinstance(batch, list)
+            or type(response.get("totalNoticeCount")) is not int
+            or response["totalNoticeCount"] < 0
+            or any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("publication-number"), str)
+                or not PUB_ID.fullmatch(item["publication-number"])
+                for item in batch
+            )
+        ):
             raise ValueError("TED search response does not satisfy the source contract")
         if total is None:
             total = response["totalNoticeCount"]
@@ -147,6 +198,7 @@ def search(query: str, evidence: list[dict], *, limit: int = MAX_PRIMARY) -> lis
                 "count": len(batch),
                 "total_matching": total,
                 "response_sha256": sha(raw),
+                "request_sha256": sha(canonical(body)),
                 "attempts": attempts,
             }
         )
@@ -158,10 +210,12 @@ def search(query: str, evidence: list[dict], *, limit: int = MAX_PRIMARY) -> lis
                 raise ValueError("Duplicate publication identifier in the query result")
             return records
         records.extend(batch)
+        if len(records) > total:
+            raise ValueError("Page rows exceed the reported query population")
         if len(records) > limit or page > 20:
             raise ValueError("Bounded query pagination exceeded")
         new_token = response.get("iterationNextToken")
-        if not new_token or new_token in seen_tokens:
+        if not isinstance(new_token, str) or not new_token or new_token in seen_tokens:
             raise ValueError("TED pagination token missing or repeated")
         seen_tokens.add(new_token)
         token = new_token
@@ -318,7 +372,9 @@ def verify_xml(raw: dict) -> dict:
 
 
 def collect(query: str, *, context_depth: int = 2) -> dict:
-    captured_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    if type(context_depth) is not int or not 0 <= context_depth <= 4:
+        raise ValueError("Context depth must be an integer between zero and four")
+    captured_at = utc_now()
     requests: list[dict] = []
     primary = search(query, requests)
     all_raw = {n["publication-number"]: n for n in primary}
@@ -376,7 +432,7 @@ def collect(query: str, *, context_depth: int = 2) -> dict:
         normalize(raw, "primary" if identifier in primary_ids else "context", lookup)
         for identifier, raw in sorted(all_raw.items())
     ]
-    completed_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    completed_at = utc_now()
     return {
         "schema_version": 1,
         "captured_at": captured_at,
@@ -452,6 +508,24 @@ def collect(query: str, *, context_depth: int = 2) -> dict:
     }
 
 
+def collect_day(publication_day: date | str, *, context_depth: int = 2) -> dict:
+    """Collect one explicit publication partition and reject misplaced primary rows."""
+    if isinstance(publication_day, str):
+        publication_day = date.fromisoformat(publication_day)
+    if type(publication_day) is not date:
+        raise ValueError("Publication day must be an ISO calendar date")
+    query = f"publication-date = {publication_day:%Y%m%d} AND classification-cpv = 72000000"
+    snapshot = collect(query, context_depth=context_depth)
+    expected = publication_day.isoformat()
+    if any(
+        row["scope"] == "primary" and row["publication_date"] != expected
+        for row in snapshot["records"]
+    ):
+        raise ValueError("Primary record falls outside the requested publication-date partition")
+    snapshot["source"]["publication_date"] = expected
+    return snapshot
+
+
 def atomic_write(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -472,9 +546,7 @@ def main() -> None:
     parser.add_argument("--publication-date", default="2026-11-13")
     parser.add_argument("--output", type=Path, default=Path("data/source_snapshot.json"))
     args = parser.parse_args()
-    publication_day = date.fromisoformat(args.publication_date)
-    query = f"publication-date = {publication_day:%Y%m%d} AND classification-cpv = 72000000"
-    snapshot = collect(query)
+    snapshot = collect_day(args.publication_date)
     atomic_write(args.output, snapshot)
     print(
         json.dumps(

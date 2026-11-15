@@ -2,6 +2,7 @@
 
 import io
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request
@@ -205,7 +206,7 @@ def test_partial_source_failure_does_not_touch_published_snapshot(monkeypatch, t
     target.write_bytes(b"previous valid snapshot")
     monkeypatch.setattr("sys.argv", ["collect", "--output", str(target)])
     monkeypatch.setattr(
-        c, "collect", lambda _: (_ for _ in ()).throw(ValueError("timed-out source"))
+        c, "collect", lambda *a, **kw: (_ for _ in ()).throw(ValueError("timed-out source"))
     )
     with pytest.raises(ValueError, match="timed-out"):
         c.main()
@@ -241,3 +242,63 @@ def test_frozen_capture_contains_no_contact_fields():
     assert not any(
         term in field for field in permitted for term in ["email", "person", "tel-", "street"]
     )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        response([], total=True),
+        response([], total=-1),
+        response(["not a notice"], token="a"),
+        response([{"publication-number": "not an id"}], token="a"),
+        response([{}], token="a"),
+    ],
+)
+def test_malformed_page_contract_cannot_enter_a_capture(monkeypatch, payload):
+    transport(monkeypatch, [payload])
+    with pytest.raises(ValueError, match="source contract"):
+        c.search("selected query", [])
+
+
+def test_page_cannot_exceed_its_reported_population(monkeypatch):
+    transport(monkeypatch, [response([{"publication-number": "1-2026"}], total=0, token="a")])
+    with pytest.raises(ValueError, match="exceed the reported"):
+        c.search("selected query", [])
+
+
+def test_retry_after_http_date_is_honored_and_bounded(monkeypatch):
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(c, "datetime", FixedDateTime)
+    assert c.retry_after_seconds("Sun, 15 Nov 2026 12:00:05 GMT", 1) == 5
+    assert c.retry_after_seconds("Sun, 15 Nov 2026 11:59:00 GMT", 1) == 0
+    with pytest.raises(RuntimeError, match="exceeds"):
+        c.retry_after_seconds("Sun, 15 Nov 2026 12:00:11 GMT", 1)
+    with pytest.raises(RuntimeError, match="Invalid"):
+        c.retry_after_seconds("not a time", 1)
+
+
+def test_capture_day_checks_partition_without_rejecting_historical_context(monkeypatch):
+    def captured(*args, **kwargs):
+        return {
+            "source": {},
+            "records": [
+                {"scope": "primary", "publication_date": "2026-11-12"},
+                {"scope": "context", "publication_date": "2026-10-01"},
+            ],
+        }
+
+    monkeypatch.setattr(c, "collect", captured)
+    assert c.collect_day("2026-11-12")["source"]["publication_date"] == "2026-11-12"
+    with pytest.raises(ValueError, match="outside the requested"):
+        c.collect_day("2026-11-11")
+
+
+@pytest.mark.parametrize("depth", [-1, 5, True, 1.5])
+def test_context_budget_is_validated_before_any_request(monkeypatch, depth):
+    monkeypatch.setattr(c, "search", lambda *a, **kw: pytest.fail("must not fetch"))
+    with pytest.raises(ValueError, match="Context depth"):
+        c.collect("selected query", context_depth=depth)
