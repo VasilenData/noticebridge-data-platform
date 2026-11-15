@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+<title id="title">NoticeBridge — See the change. Follow the source.</title>
+<desc id="desc">A charcoal and mint diagram connects an original procurement notice to its published correction and a source-linked comparison. Real public TED data, read-only explorer.</desc>
+<rect width="1200" height="630" fill="#111516"/><rect width="1200" height="6" fill="#8bdbb8"/>
+<g font-family="Arial,Helvetica,sans-serif"><text x="66" y="76" fill="#a9bcb5" font-size="16" letter-spacing="3">NOTICEBRIDGE / PUBLIC DATA ENGINEERING</text>
+<text x="64" y="176" fill="#f2f7f4" font-size="70" font-weight="700">See the change.</text><text x="64" y="251" fill="#8bdbb8" font-size="70" font-weight="700">Follow the source.</text>
+<text x="66" y="307" fill="#b6c4bf" font-size="23">Procurement notices, with their history intact.</text>
+<g stroke="#35433e" fill="#19201e"><rect x="66" y="371" width="295" height="102" rx="10"/><rect x="451" y="371" width="295" height="102" rx="10"/><rect x="837" y="371" width="295" height="102" rx="10"/></g>
+<g fill="#8bdbb8" font-size="14" letter-spacing="2"><text x="87" y="402">01 / ORIGINAL</text><text x="472" y="402">02 / CORRECTION</text><text x="858" y="402">03 / COMPARE</text></g>
+<g fill="#f2f7f4" font-size="20"><text x="87" y="442">Preserve the publication</text><text x="472" y="442">Resolve the exact parent</text><text x="858" y="442">Explain selected changes</text></g>
+<g fill="none" stroke="#8bdbb8" stroke-width="2"><path d="M375 422h60m-10-7 10 7-10 7M760 422h60m-10-7 10 7-10 7"/></g>
+<path d="M66 520h1066" stroke="#35433e"/><text x="66" y="560" fill="#b6c4bf" font-size="17">Real TED publications · Bounded source snapshot · Read-only explorer</text>
+<text x="66" y="596" fill="#81958c" font-size="13" letter-spacing="2">VASILEN KANCHEV</text></g></svg>
