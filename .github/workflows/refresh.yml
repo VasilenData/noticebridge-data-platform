@@ -1,8 +1,9 @@
 name: Capture recent TED publication partitions
 
 on:
-  schedule:
-    - cron: '23 7 * * *'
+  # Schedule intentionally disabled: TED XML returned an explicit access challenge
+  # to the hosted runner on 2026-11-15. See docs/OPERATIONS.md; do not bypass it.
+  # Restore a schedule only after a permitted execution environment is verified.
   workflow_dispatch:
     inputs:
       lookback:
