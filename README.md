@@ -2,136 +2,116 @@
 
 ![NoticeBridge: see the change and follow the source.](project-cover.svg)
 
-**A public notice changes. The original should remain inspectable, and the comparison should explain its evidence.**
+**Real procurement notices change. Reconstruct what was observed, explain the correction, and preserve the last valid result when an update fails.**
 
-[Explore the result](https://vasilendata.github.io/noticebridge-data-platform/?notice=789562-2026#explorer) · [Inspect the engineering](noticebridge/engine.py) · [Source contract](docs/SOURCES.md) · [Delivery brief](docs/DELIVERY_PROMPT.md)
+[Explore the result](https://vasilendata.github.io/noticebridge-data-platform/) · [Inspect operating evidence](https://vasilendata.github.io/noticebridge-data-platform/#operations) · [Inspect the engineering](noticebridge/operations.py) · [Runbook](docs/OPERATIONS.md)
 
-NoticeBridge turns a bounded capture of real TED procurement notices into a searchable
-change explorer. I implemented explicit correction-link resolution, immutable
-publication identities, selected-field comparisons and a staged JSON publication
-boundary. The browser shows the source, comparison and unknowns together.
+I built NoticeBridge to turn messy, explicitly linked TED publications into an
+inspectable change history. The Python pipeline archives original captures,
+reconstructs every edition from empty state, and publishes the data and run ledger
+through one verified pointer. The read-only explorer supports historical editions,
+source-linked deadline comparisons, search, filters and CSV export.
 
-## A real change to inspect
+## What makes this more than a dashboard
 
-[Publication 789562-2026](https://ted.europa.eu/en/notice/-/detail/789562-2026)
-explicitly corrects
-[publication 706866-2026](https://ted.europa.eu/en/notice/-/detail/706866-2026).
-The captured earliest reported lot deadline moves from **18 November to 25 November
-2026**. The explorer shows those dates beside the original links. This describes
-selected captured fields, not a legal interpretation of all tender documents.
+- **Real source semantics:** correction references are separate from procurement-stage predecessors. Similar titles never create an invented revision link.
+- **Independent historical replay:** retained notices must be reconstructed from original captures, rather than trusting the current output as its own history.
+- **Safe incremental repair:** a conflicting recapture or cross-capture cycle is rejected before the archive index changes. Earlier publication partitions can be backfilled using their actual later observation times.
+- **One coherent consumer edition:** immutable, hashed assets are staged and verified before a single pointer selects both data and operations metadata. The browser also verifies the downloaded bytes.
+- **Observed failure evidence:** a controlled child-process kill preserves the prior pointer and both consumer assets; recovery and exact-source repair are exercised. These are explicitly synthetic local scenarios.
+- **Useful output:** inspect changes, navigate the original sources, compare a historical edition and export the exact filtered population. Missing history and fields remain visible.
 
-The first capture contains **229 notices matching the 13 November 2026 IT query**,
-plus **72 earlier notices** fetched as bounded correction context. Five older
-correction references remain unresolved and visible. All pages of the primary query,
-including its terminal empty page, reconcile to the API's reported population.
-The collector also compared six selected identifier/date checks in each of five
-published XML representations with the API data. These 30 checks concern two
-representations from the same publisher, not independent-source corroboration.
+## Dated real-data evidence
 
-**Scope:** real public data, captured on 15 November 2026. A read-only portfolio
-demonstrator with labelled synthetic adversarial tests. It has no customers, paid
-backend, measured commercial savings or established multiweek operating history.
-It does not claim to list every open IT opportunity.
+The initial expanded edition was built on **15 November 2026** from six captures:
+the original snapshot plus a five-publication-day backfill for November 9–13.
 
-## The difficult boundary
-
-TED has both procurement-stage predecessors and explicit correction references.
-Using the former as an edit relationship can manufacture a misleading comparison.
-NoticeBridge uses only the correction relationship, preserves unresolved references,
-and refuses ambiguous identity or cyclic history.
-
-Finding an older parent later is also different from changing the child's published
-content. Original correction pointers remain part of the stable source identity;
-the resolved edge is derived against the retained publication history. A later
-capture can therefore resolve an orphan without silently rewriting the publication.
-
-## What the system demonstrates
-
-| Concern | Inspectable behavior |
+| Observed evidence | Scope |
 |---|---|
-| Partial collection | A timed-out page, changed population or missing pagination token prevents replacing the source snapshot. |
-| Meaning of a correction | Exact published references only; missing and ambiguous parents stay visible. |
-| Immutable identity | Repeated content is idempotent; conflicting content under the same publication ID is refused. |
-| Historical context | Previously captured publications are retained; absence from a later selection is not called a withdrawal. |
-| More than one deadline | The full reported date set is retained and compared; the earliest date is explicitly labelled and is not assumed to govern every lot. |
-| Failed publication | A synchronized process-interruption exercise checks that the previous complete consumer file survives and a retry can publish. |
-| Concurrent publishers | An OS-owned advisory lock rejects a competing publisher and is released when its process exits. |
-| Reproducibility | Source, normalized code and payload fingerprints identify the complete release. |
-| Browser safety | Text-safe rendering, exact TED-link validation and formula-safe CSV export. |
+| **1,457 unique notices** | 1,150 unique primary notices plus correction context; bounded IT query, not all opportunities |
+| **6 immutable captures / 5 publication dates** | All observed on one actual day; historical backfill is not five days of operation |
+| **17 HTTP 429 responses recovered** | Recorded source attempts with bounded retries; 15 occurred during the new five-day backfill |
+| **180 passing API/XML checks** | Selected identifier/date comparisons, including repeated observations; both representations have the same publisher |
+| **Zero selected-field identity conflicts** | Across overlapping notice IDs in the dated captures |
+| **Full replay equals the incremental result** | Every generated historical edition verifies against the archived source sequence |
+
+Counts describe the initial expanded edition, not a perpetual promise about the
+latest scheduled run. The [public capture and replay ledger](https://vasilendata.github.io/noticebridge-data-platform/#operations)
+shows the current evidence, acquisition attempts, clocks and archive capacity.
+
+### A concrete change
+
+[789562-2026](https://ted.europa.eu/en/notice/-/detail/789562-2026) explicitly corrects
+[706866-2026](https://ted.europa.eu/en/notice/-/detail/706866-2026). The captured
+**earliest reported lot deadline moves from 18 to 25 November 2026**. The full
+reported date set is retained without inventing an association between dates and
+individual lots. This is a selected-field comparison, not a legal interpretation
+or a claim that the opportunity is currently open.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    API[TED search: explicit date + CPV] --> COLLECT[Bounded complete collection]
-    XML[Selected published XMLs] --> CHECK[Representation checks]
-    COLLECT --> SNAP[Captured fields + request hashes]
-    CHECK --> SNAP
-    SNAP --> BUILD[Identity validation + exact correction graph]
-    OLD[Previous complete release] --> BUILD
-    BUILD --> STAGE[Validate candidate + acquire writer lock]
-    STAGE --> JSON[Atomically replace one complete JSON release]
-    JSON --> UI[Read-only notice explorer]
+    TED[TED iteration API + selected XML] --> COLLECT[Bounded complete partition capture]
+    COLLECT --> CANDIDATE[Replay entire candidate batch against history]
+    CANDIDATE --> ARCHIVE[Immutable captures + ordered index]
+    ARCHIVE --> REPLAY[Reconstruct all editions from empty state]
+    REPLAY --> ASSETS[Hashed data editions + operations ledger]
+    ASSETS --> VERIFY[Independent archive replay and byte comparison]
+    VERIFY --> POINTER[Atomically replace current.json]
+    POINTER --> WEB[Hash-verifying read-only explorer]
 ```
 
 Python 3.11+, standard library, pytest, vanilla JavaScript, Node's test runner and
-GitHub Actions. A database or message broker is unnecessary for this bounded
-snapshot-and-comparison workload. The runtime has no third-party Python dependency.
+GitHub Actions. No database, paid cloud account, LLM or message broker is needed
+for this bounded capture/replay workload. The production Python runtime has no
+third-party dependencies.
 
-## Reproduce the published snapshot
+## Reproduce and inspect
 
 ```sh
 python -m venv .venv
 # Activate .venv using your shell, then:
 python -m pip install -r requirements-dev.txt
-python -m noticebridge verify --source data/source_snapshot.json --output web/data.json
 pytest -q
 node --test web/test-ui.mjs
-python -m noticebridge exercise --output local-evidence/recovery.json
+python -m noticebridge.operations verify
+python -m noticebridge.edition_exercise --output local-evidence/new-recovery.json
 python package_site.py
 python -m http.server 8770 --directory site
 ```
 
-Open `http://localhost:8770`. The exercise requires a new output-report path and
-uses its own temporary synthetic fixtures. It does not modify the published source
-snapshot. The site packager includes only the validated, allowlisted public files.
+The exercise requires a fresh output path and uses isolated synthetic fixtures.
+See the [dated edition recovery record](docs/edition-recovery-2026-11-15-final.json),
+[source contract](docs/SOURCES.md), [review findings](docs/REVIEW.md), and
+[operating runbook](docs/OPERATIONS.md). `data/source_snapshot.json` and `web/data.json`
+retain the original 301-notice example for compatibility; the current interface
+loads `current.json` and the verified versioned editions.
 
-To build a fresh consumer file from the frozen source:
+## Refresh and honest boundaries
 
-```sh
-python -m noticebridge build --source data/source_snapshot.json --output local-evidence/data.json
-```
+A bounded daily GitHub workflow collects a three-calendar-day lookback, accepts
+only a fully replayable batch, and explicitly starts verification on the new
+commit. Tests, recovery exercises, independent replay and package checks precede
+Pages deployment. GitHub scheduling can be delayed; browser freshness is visible,
+and no independent notification service or uptime SLA is claimed.
 
-To collect a new bounded official publication query, see [the source commands and
-limits](docs/SOURCES.md). A new collection can change source facts; the offline
-verification workflow does not silently refresh this dated evidence.
+The archive stops at **100 captures or 50,000 retained notices** instead of silently
+throwing away historical evidence. Capacity, failure response and the migration
+boundary are documented in the runbook. All immutable public assets are retained
+so previously fetched pointers can still resolve after deployment.
 
-## Evidence and limits
+**Scope:** real public data and a read-only portfolio product. The initial backfill
+was collected in one session. This does not establish multiweek operation, paying
+customers, procurement outcomes or commercial savings. Buyer country is not place
+of performance. Matching rules do not determine eligibility or predict awards.
 
-The [dated local recovery exercise](docs/recovery-exercise-2026-11-15-final.json)
-passed 16 checks, including a competing writer, observed interruption before atomic
-replacement, preserved consumer bytes, lock release and successful retry. The
-Python regression suite passed 59 tests and the browser utility suite passed six.
-These are local observations; hosted CI retains its own execution evidence.
-
-The [source snapshot](data/source_snapshot.json) includes the selected original fields,
-request/response fingerprints, capture times, coverage, unresolved references and
-the XML comparison results. No contact-field harvesting is performed. The public
-browser consumes the compact derived release.
-
-CI reruns the source/compiler/browser regressions, verifies the checked-in release,
-and records a new synthetic interruption/recovery exercise before publishing the
-static site. Its downloadable evidence artifacts are retained for 14 days.
-
-Buyer country is not place of performance. Rule matching is illustrative and has
-no independently labelled relevance benchmark. Missing fields remain unknown.
-Selected-field equality does not establish that entire documents are unchanged.
-Use the official notice for current status and requirements.
-
-Implementation and review are AI-assisted. This project does not establish the
-owner's unaided interview performance, independent human review or production
-adoption. [Engineering decisions and promotion criteria](docs/DECISIONS.md).
+Implementation and review are AI-assisted; they do not establish independent human
+review or the owner's unaided interview performance. The project is suitable for a
+flagship walkthrough centred on capture, replay, failure and recovery. Choosing it
+for a three-project CV should follow the target role, not just its newer design.
 
 Source: TED / Supplement to the Official Journal of the European Union,
 © European Union. [Reuse notice](https://ted.europa.eu/en/legal-notice).
-The project applies normalization and comparison; it is not affiliated with TED.
+MIT covers this project's code, not a relicensing of the source publications.
+This project is not affiliated with TED. [Delivery prompt](docs/DELIVERY_PROMPT.md).
