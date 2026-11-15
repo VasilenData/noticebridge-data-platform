@@ -36,7 +36,7 @@ It was also AI-assisted, not an external human endorsement.
 | A staging subdirectory contains an unmanifested file. | Recursively check the exact static allowlist before packaging. |
 | A PR replaces pending production work or an older rerun deploys over newer code. | Isolate non-main concurrency and reject deployment when its SHA is no longer main. |
 
-The expanded local regression suite passed **103 Python tests and 12 JavaScript
+The expanded local regression suite passed **112 Python tests and 12 JavaScript
 tests**. The [complete-edition recovery exercise](edition-recovery-2026-11-15-final.json)
 passed **26 observed checks** using synthetic fixtures, including controlled child
 termination, preservation of both previous assets, retry and exact archived-source
@@ -45,3 +45,10 @@ repair. Earlier receipts are retained as dated iterations, with their own code h
 Real-source observations are separate: the six captures include 17 HTTP 429 responses
 recovered by bounded retries and 180 selected API/XML checks. Historical publication
 partitions were collected today; they do not establish historical operating uptime.
+
+The first hosted refresh exposed an empty XML response. Follow-up regressions keep
+HTTP and content failures inside one three-attempt budget, preserve terminal
+response diagnostics, and refuse explicit access challenges without bypass.
+API/XML disagreements still fail. Review also found encoding-dependent DTD
+rejection; the parser now refuses doctypes directly, including UTF-16 input.
+The collector subset passes 40 tests. See the dated incident in [Operations](OPERATIONS.md).

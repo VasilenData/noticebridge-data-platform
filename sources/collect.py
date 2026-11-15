@@ -17,10 +17,12 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from xml.parsers.expat import errors as xml_errors
 
 ENDPOINT = "https://api.ted.europa.eu/v3/notices/search"
 FIELDS = [
@@ -45,6 +47,86 @@ MAX_PRIMARY = 1000
 MAX_CONTEXT = 160
 PAGE_SIZE = 100
 MAX_RETRY_WAIT = 10
+TRUNCATED_XML_CODES = {
+    xml_errors.codes[getattr(xml_errors, name)]
+    for name in (
+        "XML_ERROR_NO_ELEMENTS",
+        "XML_ERROR_UNCLOSED_TOKEN",
+        "XML_ERROR_PARTIAL_CHAR",
+        "XML_ERROR_UNCLOSED_CDATA_SECTION",
+    )
+}
+
+
+class SourceResponseError(ValueError):
+    """Keep non-content diagnostics visible even when a whole capture is refused."""
+
+    def __init__(self, reason: str, attempts: list[dict]):
+        self.attempts = [dict(attempt) for attempt in attempts]
+        super().__init__(
+            f"Source representation refused: {reason}; "
+            f"attempt_count={len(attempts)}; "
+            f"diagnostics={json.dumps(self.attempts, sort_keys=True)}"
+        )
+
+
+class UnsafeXML(ValueError):
+    pass
+
+
+class NoDoctypeTreeBuilder(ET.TreeBuilder):
+    def doctype(self, name, pubid, system):
+        raise UnsafeXML("XML document types and entities are prohibited")
+
+
+def parse_xml(body: bytes) -> ET.Element:
+    """Enforce no-DTD policy after decoding, including UTF-16 declarations."""
+    return ET.fromstring(body, parser=ET.XMLParser(target=NoDoctypeTreeBuilder()))
+
+
+def response_headers(headers) -> dict:
+    """Only diagnostic headers; never cookies, authentication values or response bodies."""
+    return {
+        name.lower(): headers.get(name)
+        for name in (
+            "Content-Type",
+            "Content-Length",
+            "Retry-After",
+            "X-Amzn-Waf-Action",
+            "CF-Mitigated",
+        )
+        if headers is not None and headers.get(name) is not None
+    }
+
+
+def xml_response_problem(status: int, headers: dict, body: bytes) -> tuple[str, bool] | None:
+    """Return an explicit refusal reason and whether one bounded retry is appropriate."""
+    if headers.get("x-amzn-waf-action", "").lower() in {"challenge", "captcha"} or (
+        headers.get("cf-mitigated", "").lower() == "challenge"
+    ):
+        return "explicit_access_challenge_no_bypass", False
+    if not body.strip():
+        return "empty_xml_response", True
+    content_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    prefix = body[:4096].lstrip().lower()
+    if content_type in {"text/html", "application/xhtml+xml"} or (
+        b"<!doctype html" in prefix or re.search(rb"<html(?:\s|>)", prefix)
+    ):
+        return "html_or_access_page_instead_of_xml_no_bypass", False
+    if status != 200:
+        return f"unexpected_xml_http_status_{status}", status in {202, 204}
+    declared_length = headers.get("content-length")
+    if declared_length and declared_length.isdigit() and int(declared_length) > len(body):
+        return "xml_body_shorter_than_content_length", True
+    if b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
+        return "xml_external_entities_prohibited", False
+    try:
+        parse_xml(body)
+    except UnsafeXML:
+        return "xml_external_entities_prohibited", False
+    except ET.ParseError as exc:
+        return f"invalid_xml_parser_code_{exc.code}", exc.code in TRUNCATED_XML_CODES
+    return None
 
 
 def utc_now() -> str:
@@ -81,7 +163,7 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def read_url(request: Request, attempts: list[dict]) -> bytes:
+def read_url(request: Request, attempts: list[dict], *, expect_xml: bool = False) -> bytes:
     """Bounded retries; a failed call never replaces the last source snapshot."""
     for attempt in range(3):
         started = time.monotonic()
@@ -89,33 +171,83 @@ def read_url(request: Request, attempts: list[dict]) -> bytes:
         try:
             with urlopen(request, timeout=20) as response:
                 body = response.read(MAX_RESPONSE_BYTES + 1)
+                headers = response_headers(getattr(response, "headers", None))
+                entry = {
+                    "url": request.full_url,
+                    "attempt": attempt + 1,
+                    "status": response.status,
+                    "content_type": headers.get("content-type"),
+                    "response_headers": headers,
+                    "bytes": len(body),
+                    "sha256": sha(body),
+                    "observed_at_utc": observed_at,
+                    "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                }
+                attempts.append(entry)
                 if len(body) > MAX_RESPONSE_BYTES:
-                    raise ValueError("Source response exceeds the collection limit")
-                attempts.append(
-                    {
-                        "url": request.full_url,
-                        "attempt": attempt + 1,
-                        "status": response.status,
-                        "bytes": len(body),
-                        "sha256": sha(body),
-                        "observed_at_utc": observed_at,
-                        "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-                    }
+                    entry["body_read_limited"] = True
+                    raise SourceResponseError(
+                        "Source response exceeds the collection limit", attempts
+                    )
+                problem = (
+                    xml_response_problem(response.status, headers, body) if expect_xml else None
                 )
+                if problem:
+                    reason, retryable = problem
+                    entry["response_problem"] = reason
+                    if not retryable or attempt == 2:
+                        raise SourceResponseError(reason, attempts)
+                    try:
+                        wait = retry_after_seconds(headers.get("retry-after"), 2**attempt)
+                    except RuntimeError as exc:
+                        raise SourceResponseError(str(exc), attempts) from exc
+                    entry["retry_wait_seconds"] = wait
+                    time.sleep(wait)
+                    continue
                 return body
         except HTTPError as exc:
+            headers = response_headers(exc.headers)
+            body_read_error = None
+            try:
+                error_body = exc.read(MAX_RESPONSE_BYTES + 1) if exc.fp is not None else b""
+            except (OSError, HTTPException) as body_error:
+                partial = getattr(body_error, "partial", b"")
+                error_body = (
+                    partial[: MAX_RESPONSE_BYTES + 1] if isinstance(partial, bytes) else b""
+                )
+                body_read_error = type(body_error).__name__
+            finally:
+                exc.close()
             entry = {
                 "url": request.full_url,
                 "attempt": attempt + 1,
                 "status": exc.code,
+                "content_type": headers.get("content-type"),
+                "response_headers": headers,
+                "bytes": len(error_body),
+                "sha256": sha(error_body),
+                "body_read_limited": len(error_body) > MAX_RESPONSE_BYTES,
+                "body_read_error": body_read_error,
+                "body_hash_scope": "bytes_available_to_client",
                 "observed_at_utc": observed_at,
                 "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
             }
             attempts.append(entry)
+            problem = xml_response_problem(exc.code, headers, error_body) if expect_xml else None
+            if problem and problem[0] == "explicit_access_challenge_no_bypass":
+                entry["response_problem"] = problem[0]
+                raise SourceResponseError(problem[0], attempts) from exc
             retryable = exc.code in {408, 429, 500, 502, 503, 504}
             if not retryable or attempt == 2:
+                if expect_xml:
+                    raise SourceResponseError(f"HTTP error {exc.code}", attempts) from exc
                 raise
-            wait = retry_after_seconds(exc.headers.get("Retry-After"), 2**attempt)
+            try:
+                wait = retry_after_seconds(headers.get("retry-after"), 2**attempt)
+            except RuntimeError as retry_error:
+                if expect_xml:
+                    raise SourceResponseError(str(retry_error), attempts) from retry_error
+                raise
             entry["retry_wait_seconds"] = wait
             time.sleep(wait)
         except (TimeoutError, ConnectionError, URLError) as exc:
@@ -130,6 +262,8 @@ def read_url(request: Request, attempts: list[dict]) -> bytes:
                 }
             )
             if attempt == 2:
+                if expect_xml:
+                    raise SourceResponseError("Transport attempts exhausted", attempts) from exc
                 raise
             time.sleep(2**attempt)
     raise AssertionError("unreachable")
@@ -318,11 +452,13 @@ def verify_xml(raw: dict) -> dict:
     url = f"https://ted.europa.eu/en/notice/{publication}/xml"
     attempts: list[dict] = []
     body = read_url(
-        Request(url, headers={"User-Agent": "NoticeBridge-portfolio-public-data/0.1"}), attempts
+        Request(url, headers={"User-Agent": "NoticeBridge-portfolio-public-data/0.1"}),
+        attempts,
+        expect_xml=True,
     )
     if b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
         raise ValueError("XML external entities are prohibited")
-    root = ET.fromstring(body)
+    root = parse_xml(body)
 
     def name(element: ET.Element) -> str:
         return element.tag.rsplit("}", 1)[-1]
@@ -349,7 +485,9 @@ def verify_xml(raw: dict) -> dict:
         == sorted({calendar_date(x) for x in raw.get("deadline-receipt-tender-date-lot", [])}),
     }
     if not all(checks.values()):
-        raise ValueError(f"API/XML reconciliation failed for {publication}: {checks}")
+        raise SourceResponseError(
+            f"API/XML reconciliation failed for {publication}: {checks}", attempts
+        )
     return {
         "notice_id": publication,
         "url": url,
