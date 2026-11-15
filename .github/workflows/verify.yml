@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: noticebridge-${{ github.ref }}
+  group: ${{ github.ref == 'refs/heads/main' && 'noticebridge-publication' || format('noticebridge-check-{0}', github.ref) }}
   cancel-in-progress: false
 
 jobs:
@@ -34,9 +34,11 @@ jobs:
       - name: Browser filtering and export regressions
         run: node --test web/test-ui.mjs
       - name: Reproduce the checked-in source release
-        run: python -m noticebridge verify --source data/source_snapshot.json --output web/data.json
+        run: python -m noticebridge.operations verify
       - name: Exercise interrupted publication and recovery
         run: python -m noticebridge exercise --output "${{ runner.temp }}/noticebridge-evidence.json"
+      - name: Exercise complete edition interruption and source repair
+        run: python -m noticebridge.edition_exercise --output "${{ runner.temp }}/edition-evidence.json"
       - name: Retain actual CI evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -45,6 +47,7 @@ jobs:
           path: |
             test-results.xml
             ${{ runner.temp }}/noticebridge-evidence.json
+            ${{ runner.temp }}/edition-evidence.json
           retention-days: 14
           if-no-files-found: warn
       - name: Prepare the read-only site
@@ -59,6 +62,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: verify
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
@@ -67,6 +71,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Refuse stale workflow reruns before deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          current_head=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
+          test "$current_head" = "$GITHUB_SHA"
       - name: Deploy the verified static site
         id: deployment
         uses: actions/deploy-pages@v4
