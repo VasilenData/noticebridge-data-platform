@@ -35,7 +35,7 @@ def main() -> None:
         manifest[name] = {"sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)}
         shutil.copyfile(source, target / name)
     (target / "asset-manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
     )
     print(f"Staged {len(PUBLIC_FILES)} verified public files in {target}")
 
