@@ -21,6 +21,11 @@ source-linked deadline comparisons, search, filters and CSV export.
 - **Observed failure evidence:** a controlled child-process kill preserves the prior pointer and both consumer assets; recovery and exact-source repair are exercised. These are explicitly synthetic local scenarios.
 - **Useful output:** inspect changes, navigate the original sources, compare a historical edition and export the exact filtered population. Missing history and fields remain visible.
 
+**Latest reliability improvement:** source hashing and parsing now consume the same
+bounded bytes; rehashed capacity and history totals must also reconcile. A fresh
+Windows checkout preserves fingerprinted JSON without line-ending conversion.
+[Counterexamples, fixes and recovery evidence](docs/BYTE_BOUNDARIES.md).
+
 ## Dated real-data evidence
 
 The initial expanded edition was built on **15 November 2026** from six captures:

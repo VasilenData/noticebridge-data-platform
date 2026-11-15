@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .engine import ContractError, canonical, code_fingerprint, compile_release, digest
-from .publish import read_json, writer_lock
+from .publish import MAX_JSON_BYTES, parse_json, read_bytes_bounded, read_json, writer_lock
 
 MAX_CAPTURES = 100
 HASH = re.compile(r"^[a-f0-9]{64}$")
@@ -54,8 +54,10 @@ def atomic_bytes(path: Path, raw: bytes) -> None:
 
 def immutable_bytes(path: Path, raw: bytes) -> None:
     """A corrupt existing address is an incident, never an overwrite opportunity."""
+    if len(raw) > MAX_JSON_BYTES:
+        raise ContractError("Immutable asset exceeds the 64 MiB demonstration bound")
     if path.exists():
-        if path.read_bytes() != raw:
+        if read_bytes_bounded(path) != raw:
             raise ContractError(f"Immutable artifact conflict: {path.name}")
     else:
         atomic_bytes(path, raw)
@@ -86,9 +88,10 @@ def read_archive(data: Path) -> tuple[dict, list[dict]]:
         except (TypeError, ValueError) as exc:
             raise ContractError("Invalid publication partition") from exc
         path = data / entry["path"]
-        if sha(path.read_bytes()) != fingerprint:
+        raw = read_bytes_bounded(path)
+        if sha(raw) != fingerprint:
             raise ContractError(f"Archived source hash mismatch: {path.name}")
-        source = read_json(path)
+        source = parse_json(raw, path.name)
         observed = utc(source.get("captured_at"))
         if entry.get("captured_at") != source.get("captured_at"):
             raise ContractError("Index observation time differs from archived source")
@@ -122,8 +125,8 @@ def import_batch(data: Path, captures: list[tuple[Path, str, str]]) -> list[dict
         additions = {}
         results = []
         for source, day, mode in captures:
-            raw = source.read_bytes()
-            snapshot = read_json(source)
+            raw = read_bytes_bounded(source)
+            snapshot = parse_json(raw, source.name)
             compile_release(snapshot)
             fingerprint = sha(raw)
             matched = next((e for e in candidate["captures"] if e["sha256"] == fingerprint), None)
@@ -150,7 +153,7 @@ def import_batch(data: Path, captures: list[tuple[Path, str, str]]) -> list[dict
             for old in index["captures"]:
                 target = temp / old["path"]
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes((data / old["path"]).read_bytes())
+                target.write_bytes(read_bytes_bounded(data / old["path"]))
             for name, raw in additions.items():
                 (temp / name).parent.mkdir(parents=True, exist_ok=True)
                 (temp / name).write_bytes(raw)
@@ -233,7 +236,7 @@ def asset(web: Path, descriptor: dict) -> bytes:
         raise ContractError("Invalid asset fingerprint")
     if descriptor.get("path") != f"releases/{fingerprint}.json":
         raise ContractError("Invalid immutable asset path")
-    raw = (web / descriptor["path"]).read_bytes()
+    raw = read_bytes_bounded(web / descriptor["path"])
     if sha(raw) != fingerprint:
         raise ContractError("Published asset bytes do not match the pointer")
     return raw
@@ -244,13 +247,20 @@ def verify_edition(data: Path, web: Path, pointer: dict | None = None) -> dict:
     if pointer.get("schema_version") != 1:
         raise ContractError("Unsupported release pointer")
     index, releases, runs = replay(data)
-    operations = json.loads(asset(web, pointer["operations"]))
+    operations = parse_json(asset(web, pointer["operations"]), "operations")
     if operations.get("schema_version") != 1 or utc(operations.get("built_at")) < utc(
         runs[-1]["captured_at"]
     ):
         raise ContractError("Invalid operations schema or build observation time")
     if asset(web, pointer["release"]) != canonical(releases[-1]):
         raise ContractError("Current release differs from independent archived-source replay")
+    capacity = operations.get("archive_capacity")
+    if (
+        not isinstance(capacity, dict)
+        or any(type(capacity.get(k)) is not int for k in ("maximum", "remaining"))
+        or capacity != {"maximum": MAX_CAPTURES, "remaining": MAX_CAPTURES - len(runs)}
+    ):
+        raise ContractError("Archive capacity differs from verified capture count")
     if (
         operations.get("archive_sha256") != digest(index)
         or operations.get("code_sha256") != code_fingerprint()
@@ -294,7 +304,7 @@ def publish_edition(data: Path, web: Path, *, before_promote=None) -> dict:
         existing = web / "current.json"
         if existing.exists():
             old = read_json(existing)
-            operations = json.loads(asset(web, old["operations"]))
+            operations = parse_json(asset(web, old["operations"]), "operations")
             if (
                 operations.get("archive_sha256") == digest(index)
                 and operations.get("code_sha256") == code_fingerprint()
