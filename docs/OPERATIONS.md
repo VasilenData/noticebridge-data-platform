@@ -58,7 +58,11 @@ primary rows are refused. Absence from a later query never means withdrawal.
 
 ## Refresh workflow and limits
 
-The scheduled workflow requests the preceding three UTC calendar days at 07:23 UTC.
+The refresh command requests the preceding three UTC calendar days by default.
+The GitHub workflow is manual-only after the observed hosted access challenge below;
+the previously configured 07:23 UTC schedule was removed. Do not repeatedly run it
+from the challenged environment. A permitted execution environment must first pass
+the unchanged source checks before scheduling is restored.
 It uses the public unauthenticated TED API and no paid database or cloud account.
 Weekends/holidays may return a correctly completed zero-row partition. Successful
 check time and newest publication date are separate; neither proves a notice is open.
@@ -113,6 +117,21 @@ still matched the verified six-capture edition byte-for-byte. Its data asset was
 This establishes containment for this incident, not a successful hosted refresh
 or a long-term availability record. The follow-up adds bounded response retries
 and explicit diagnostics while keeping API/XML validation mandatory.
+
+The instrumented follow-up,
+[run 43727527685](https://github.com/VasilenData/noticebridge-data-platform/actions/runs/43727527685),
+stopped at 15:02:00 UTC after **one** XML attempt. TED returned HTTP 202,
+`Content-Type: text/html; charset=UTF-8`, zero bytes and
+`x-amzn-waf-action: challenge`. The collector reported
+`explicit_access_challenge_no_bypass`; it did not retry or use an alternate endpoint.
+No batch was committed. This identifies the second failure as a hosted access
+restriction, not malformed notice data. The original response lacked this telemetry,
+so its cause remains unproven.
+
+The workflow schedule is disabled. Existing local captures and independently
+verified Pages publication remain usable. Resume automated collection only in a
+permitted environment with the same XML validation gates; a hosted collection,
+commit, dispatch and deployment cycle remains unverified end-to-end.
 
 ## References
 
